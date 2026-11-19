@@ -1,0 +1,34 @@
+# 虚拟环境 / 构建产物
+.venv/
+build/
+dist/
+.build-out/
+build-preserve/
+.cache/
+.tmp/
+
+# 运行时数据：都放在数据目录里，不进仓库
+savepoint-data/
+savepoint.ini
+pmtool-data/
+pmtool.ini
+*.log
+
+# 本地调试产物
+.preview/
+.preview-data/
+.runtime-data/
+.smoke-data/
+.diag-data/
+.shots/
+_diag.py
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# 构建时由 build.py 生成
+scripts/version_info.txt
+
