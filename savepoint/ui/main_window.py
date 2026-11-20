@@ -36,6 +36,7 @@ from ..core.paths import human_size, parse_iso
 from ..core.repo import Project, Repo
 from ..core.storage import ShotStore
 from .dialogs import ProjectDialog, TextPromptDialog, show_open_failure
+from .document_library import DocumentLibraryWindow
 from .hotkey import GlobalHotkey
 from .icons import folder_icon, note_icon
 from .maintenance import RestoreDialog, TrashDialog
@@ -147,6 +148,7 @@ class MainWindow(QMainWindow):
         self.store = store
         self.doc_store = doc_store
         self.notes_window: NotesWindow | None = None
+        self.documents_window = None
         self.search_dialog: GlobalSearchDialog | None = None
         self.activity_window: ActivityWindow | None = None
         self.trash_dialog: TrashDialog | None = None
@@ -216,6 +218,11 @@ class MainWindow(QMainWindow):
         self.total_label.setObjectName("Muted")
         layout.addWidget(self.total_label)
         layout.addStretch(1)
+
+        docs_btn = QPushButton("📄 文档库")
+        docs_btn.setToolTip("收纳桌面上的 Word / PDF / Excel 等文件（Ctrl+Shift+D）")
+        docs_btn.clicked.connect(self.open_documents)
+        layout.addWidget(docs_btn)
 
         new_btn = QPushButton("+ 新建项目")
         new_btn.setObjectName("Primary")
@@ -452,7 +459,8 @@ class MainWindow(QMainWindow):
         self.stack = QStackedWidget()
         self.stack.addWidget(self._build_empty_state())
 
-        self.detail = ProjectDetail(self.repo, self.store, self.doc_store)
+        self.detail = ProjectDetail(self.repo, self.store)
+        self.detail.documents_requested.connect(self._import_into_library)
         self.detail.changed.connect(self._on_detail_changed)
         self.detail.deleted.connect(self._on_project_deleted)
         self.stack.addWidget(self.detail)
@@ -483,6 +491,7 @@ class MainWindow(QMainWindow):
             ("Ctrl+F", self._focus_search),
             ("Ctrl+K", self.open_search),
             ("Ctrl+Shift+V", self.open_notes),
+            ("Ctrl+Shift+D", lambda: self.open_documents()),
             ("Ctrl+Shift+B", self.run_backup),
             ("Ctrl+Shift+T", self.open_trash),
         ]
@@ -695,6 +704,29 @@ class MainWindow(QMainWindow):
         self.notes_window.raise_()
         self.notes_window.activateWindow()
 
+    # ---------------- 文档库 ----------------
+
+    def open_documents(self, folder: str | None = None) -> None:
+        if self.doc_store is None:
+            QMessageBox.information(self, "文档库", "文档存储没有初始化。")
+            return
+        if self.documents_window is None:
+            self.documents_window = DocumentLibraryWindow(self, self.repo, self.doc_store)
+            self.documents_window.changed.connect(self.refresh_all)
+        if folder:
+            self.documents_window._folder = folder  # noqa: SLF001 - 内部定位
+        self.documents_window.refresh()
+        self.documents_window.show()
+        self.documents_window.raise_()
+        self.documents_window.activateWindow()
+
+    def _import_into_library(self, files: list[str]) -> None:
+        """项目里拖进非图片文件时，转给文档库。"""
+        if self.doc_store is None:
+            return
+        self.open_documents()
+        self.documents_window.import_files(files)
+
     # ---------------- 搜索 / 活动流 / 回收站 / 恢复 ----------------
 
     def open_search(self) -> None:
@@ -706,6 +738,10 @@ class MainWindow(QMainWindow):
     def _on_search_result(self, result: dict) -> None:
         if result.get("kind") == "note":
             self.open_notes(result["id"])
+            return
+        if result.get("kind") == "document":
+            self.open_documents()
+            self.documents_window.view_document(result["id"])
             return
         project_id = result.get("project_id") or (
             result["id"] if result.get("kind") == "project" else None
@@ -846,6 +882,7 @@ class MainWindow(QMainWindow):
         restore_action = menu.addAction("从备份恢复…")
         menu.addSeparator()
         activity_action = menu.addAction("活动流…")
+        documents_action = menu.addAction("文档库…")
         trash_action = menu.addAction("回收站…")
         menu.addSeparator()
         folder_action = menu.addAction("打开数据目录")
@@ -860,6 +897,8 @@ class MainWindow(QMainWindow):
             self.open_restore()
         elif chosen == activity_action:
             self.open_activity()
+        elif chosen == documents_action:
+            self.open_documents()
         elif chosen == trash_action:
             self.open_trash()
         elif chosen == backup_action:

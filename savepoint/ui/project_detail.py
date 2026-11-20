@@ -73,12 +73,12 @@ def _section_header(title: str, hint: str = "") -> QWidget:
 class ProjectDetail(QWidget):
     changed = Signal()
     deleted = Signal(str)
+    documents_requested = Signal(list)
 
-    def __init__(self, repo, store, doc_store=None, parent: QWidget | None = None) -> None:
+    def __init__(self, repo, store, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.repo = repo
         self.store = store
-        self.doc_store = doc_store
         self._project: Project | None = None
         self._loading = False
         self._overlay = None
@@ -208,14 +208,6 @@ class ProjectDetail(QWidget):
         self.entries_layout.setSpacing(6)
         self.content_layout.addLayout(self.entries_layout)
 
-        # 文档
-        self.content_layout.addWidget(
-            _section_header("文档", "Word / PDF / Excel / PPT 拖进来就能读")
-        )
-        self.docs_layout = QVBoxLayout()
-        self.docs_layout.setSpacing(8)
-        self.content_layout.addLayout(self.docs_layout)
-
         # 截图
         self.content_layout.addWidget(
             _section_header("截图时间线", "拖进来、截一张、或粘贴，自动带时间")
@@ -261,10 +253,9 @@ class ProjectDetail(QWidget):
 
             shots = self.repo.list_screenshots(project.id)
             entries = self.repo.list_entries(project.id)
-            docs = self.repo.list_documents(project.id)
             self.meta_label.setText(
                 f"最后更新 {paths.relative_time(project.updated_at)}"
-                f" · {len(entries)} 条记录 · {len(shots)} 张截图 · {len(docs)} 份文档"
+                f" · {len(entries)} 条记录 · {len(shots)} 张截图"
                 f" · 创建于 {paths.human_time(project.created_at, with_year=True)}"
             )
             self._refresh_path()
@@ -272,7 +263,6 @@ class ProjectDetail(QWidget):
             self.next_edit.setText(project.next_step)
             self.notes_edit.setPlainText(project.notes)
             self._render_entries(entries)
-            self._render_documents(docs)
             self._render_shots(shots)
         finally:
             self._loading = False
@@ -291,7 +281,6 @@ class ProjectDetail(QWidget):
         self.summary_edit.setText("")
         self.next_edit.setText("")
         _clear_layout(self.entries_layout)
-        _clear_layout(self.docs_layout)
         _clear_layout(self.shots_layout)
 
     # ---------------- 状态 ----------------
@@ -481,175 +470,11 @@ class ProjectDetail(QWidget):
         self._project.updated_at = project.updated_at
         shots = self.repo.list_screenshots(project.id)
         entries = self.repo.list_entries(project.id)
-        docs = self.repo.list_documents(project.id)
         self.meta_label.setText(
             f"最后更新 {paths.relative_time(project.updated_at)}"
-            f" · {len(entries)} 条记录 · {len(shots)} 张截图 · {len(docs)} 份文档"
+            f" · {len(entries)} 条记录 · {len(shots)} 张截图"
             f" · 创建于 {paths.human_time(project.created_at, with_year=True)}"
         )
-
-    # ---------------- 文档 ----------------
-
-    def _render_documents(self, docs) -> None:
-        _clear_layout(self.docs_layout)
-        if not docs:
-            empty = QLabel(
-                "把 Word、PDF、Excel、PPT 拖进来，会自动读取内容并问你要不要存到项目里。"
-            )
-            empty.setObjectName("Muted")
-            empty.setWordWrap(True)
-            self.docs_layout.addWidget(empty)
-            return
-        for doc in docs:
-            self.docs_layout.addWidget(self._document_card(doc))
-
-    def _document_card(self, doc) -> QWidget:
-        card = QFrame()
-        card.setObjectName("EntryCard")
-        row = QHBoxLayout(card)
-        row.setContentsMargins(12, 9, 12, 9)
-        row.setSpacing(12)
-
-        from ..core.documents import kind_of
-        from .document_dialog import kind_color
-
-        kind = kind_of(doc.ext)
-        badge = QLabel(kind)
-        badge.setAlignment(Qt.AlignCenter)
-        badge.setFixedWidth(54)
-        color = kind_color(kind)
-        badge.setStyleSheet(
-            f"color:{color}; border:1px solid {color}55; background:{color}14;"
-            " border-radius:5px; padding:3px 0; font-size:8.5pt; font-weight:600;"
-        )
-        row.addWidget(badge)
-
-        text_box = QVBoxLayout()
-        text_box.setSpacing(2)
-        name = QLabel(doc.orig_name)
-        name.setWordWrap(True)
-        name.setStyleSheet("font-weight:600;")
-        text_box.addWidget(name)
-
-        bits = [paths.human_size(doc.size)]
-        if doc.text_content:
-            bits.append(f"{len(doc.text_content)} 字")
-        else:
-            bits.append("无文本")
-        bits.append(paths.human_time(doc.created_at))
-        meta = QLabel(" · ".join(bits))
-        meta.setObjectName("Muted")
-        text_box.addWidget(meta)
-        row.addLayout(text_box, 1)
-
-        open_btn = QPushButton("查看")
-        open_btn.setObjectName("Link")
-        open_btn.clicked.connect(lambda _=False, d=doc: self._view_document(d.id))
-        row.addWidget(open_btn)
-
-        del_btn = QPushButton("删除")
-        del_btn.setObjectName("Link")
-        del_btn.setStyleSheet("color:#c0392b; font-size:9pt;")
-        del_btn.clicked.connect(lambda _=False, d=doc: self._delete_document(d.id))
-        row.addWidget(del_btn)
-        return card
-
-    def _view_document(self, doc_id: str) -> None:
-        doc = self.repo.get_document(doc_id)
-        if doc is None:
-            return
-        from .document_dialog import DocumentViewer
-
-        if self.doc_store is None:
-            QMessageBox.warning(self, "打不开", "文档存储没有初始化。")
-            return
-        viewer = DocumentViewer(self, doc, self.doc_store.abs_path(doc.rel_path))
-        viewer.setAttribute(Qt.WA_DeleteOnClose, True)
-        viewer.show()
-        viewer.raise_()
-        viewer.activateWindow()
-
-    def _delete_document(self, doc_id: str) -> None:
-        if not self._project:
-            return
-        doc = self.repo.get_document(doc_id)
-        if doc is None:
-            return
-        confirm = QMessageBox.question(
-            self, "删除文档",
-            f"确定删除「{doc.orig_name}」？\n会进回收站，30 天内可恢复。",
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
-        )
-        if confirm != QMessageBox.Yes:
-            return
-        self.repo.delete_document(doc_id)
-        self._render_documents(self.repo.list_documents(self._project.id))
-        self._update_meta()
-        self.changed.emit()
-
-    def _import_documents(self, paths_list: list[Path]) -> int:
-        """逐个询问并把文档存进项目，返回入库数量。"""
-        if not self._project or self.doc_store is None:
-            return 0
-        from ..core.documents import DocumentError, extract_text
-
-        added = 0
-        for path in paths_list:
-            try:
-                data = path.read_bytes()
-            except OSError as exc:
-                QMessageBox.warning(self, "读取失败", f"{path.name}\n{exc}")
-                continue
-
-            from ..core.documents import sha256_of
-
-            digest = sha256_of(data)
-            if self.repo.find_document_by_hash(self._project.id, digest):
-                QMessageBox.information(
-                    self, "已经有了", f"「{path.name}」已经在当前项目的文档里了。"
-                )
-                continue
-
-            text, warning = extract_text(path)
-
-            from .document_dialog import DocumentImportDialog, kind_color  # noqa: F401
-            from ..core.documents import kind_of
-
-            dialog = DocumentImportDialog(
-                self,
-                name=path.name,
-                kind=kind_of(path.suffix),
-                size=len(data),
-                text=text,
-                warning=warning,
-            )
-            if not dialog.exec():
-                continue
-            if dialog.choice() == DocumentImportDialog.READ_ONLY:
-                # 只看不存：把内容直接作为一条记录留下，不复制文件
-                if text:
-                    self.repo.add_entry(
-                        self._project.id, f"读了《{path.name}》：\n{text[:2000]}"
-                    )
-                    added += 1
-                continue
-
-            try:
-                rel, size, digest = self.doc_store.save(self._project.id, path)
-            except DocumentError as exc:
-                QMessageBox.warning(self, "保存失败", f"{path.name}\n{exc}")
-                continue
-            self.repo.add_document(
-                self._project.id,
-                rel_path=rel,
-                orig_name=path.name,
-                ext=path.suffix.lower(),
-                size=size,
-                sha256=digest,
-                text_content=text,
-            )
-            added += 1
-        return added
 
     # ---------------- 截图 ----------------
 
@@ -700,13 +525,13 @@ class ProjectDetail(QWidget):
         self.changed.emit()
 
     def _add_files(self, files: list[str]) -> None:
-        """拖进来的文件：图片进截图时间线，其余按文档处理。"""
+        """拖进项目的是图片；其它文件交给文档库处理。"""
         if not self._project:
             return
         from ..core.documents import is_document
 
         images: list[Path] = []
-        documents: list[Path] = []
+        documents: list[str] = []
         skipped: list[str] = []
         for file_text in files:
             path = Path(file_text)
@@ -716,20 +541,29 @@ class ProjectDetail(QWidget):
             if suffix in config.IMAGE_SUFFIXES:
                 images.append(path)
             elif is_document(path):
-                documents.append(path)
+                documents.append(str(path))
             else:
                 skipped.append(path.name)
 
         shots_added = self._add_image_paths(images)
-        docs_added = self._import_documents(documents) if documents else 0
 
-        if docs_added:
-            self._render_documents(self.repo.list_documents(self._project.id))
         if shots_added:
             self._render_shots(self.repo.list_screenshots(self._project.id))
-        if shots_added or docs_added:
             self._update_meta()
             self.changed.emit()
+
+        if documents:
+            # 文档不进项目，转给文档库统一收纳
+            answer = QMessageBox.question(
+                self,
+                "文档放到文档库",
+                f"这 {len(documents)} 个文件不是图片，项目里只放截图。\n\n"
+                "要把它们收进「文档库」吗？（桌面上的原件可以之后删掉）",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.Yes,
+            )
+            if answer == QMessageBox.Yes:
+                self.documents_requested.emit(documents)
 
         if skipped:
             preview = "、".join(skipped[:5])
@@ -738,7 +572,7 @@ class ProjectDetail(QWidget):
                 self,
                 "这些类型还不支持",
                 f"{preview}{more} 没能导入。\n\n"
-                "目前支持：图片，以及 PDF / Word / Excel / PPT 和常见文本文件。",
+                "截图支持常见图片格式；文档请在「文档库」里导入。",
             )
 
     def _add_image_paths(self, images: list[Path]) -> int:
@@ -917,7 +751,5 @@ class ProjectDetail(QWidget):
         self.repo.delete_project(project_id)
         self.repo.prune_orphan_tags()
         self.store.remove_project(project_id)
-        if self.doc_store is not None:
-            self.doc_store.remove_project(project_id)
         self.clear()
         self.deleted.emit(project_id)

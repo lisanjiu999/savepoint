@@ -102,46 +102,6 @@ QSplitter::handle { background: #191c20; }
 """
 
 
-class TextPromptDialog(QDialog):
-    """深色输入框，用于新建分区。"""
-
-    def __init__(self, parent: QWidget | None, title: str, label: str, default: str = "") -> None:
-        super().__init__(parent)
-        self.setWindowTitle(title)
-        self.setMinimumWidth(360)
-        self.setStyleSheet(DARK_QSS)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(18, 16, 18, 14)
-        layout.setSpacing(10)
-        tip = QLabel(label)
-        tip.setWordWrap(True)
-        layout.addWidget(tip)
-        self.edit = QLineEdit(default)
-        self.edit.setPlaceholderText("输入名称")
-        self.edit.returnPressed.connect(self.accept)
-        layout.addWidget(self.edit)
-
-        row = QHBoxLayout()
-        row.addStretch(1)
-        cancel = QPushButton("取消")
-        cancel.clicked.connect(self.reject)
-        ok = QPushButton("确定")
-        ok.setObjectName("NotePrimary")
-        ok.setDefault(True)
-        ok.clicked.connect(self.accept)
-        row.addWidget(cancel)
-        row.addWidget(ok)
-        layout.addLayout(row)
-
-    def value(self) -> str:
-        return self.edit.text().strip()
-
-    def accept(self) -> None:
-        if self.value():
-            super().accept()
-
-
 class NotesWindow(QDialog):
     def __init__(self, parent: QWidget | None, repo, note_id: str | None = None) -> None:
         super().__init__(parent)

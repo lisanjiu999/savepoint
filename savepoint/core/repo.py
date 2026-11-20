@@ -64,7 +64,7 @@ class Note:
 @dataclass
 class Document:
     id: str
-    project_id: str
+    folder: str
     rel_path: str
     orig_name: str
     ext: str
@@ -73,6 +73,7 @@ class Document:
     text_content: str
     note: str
     created_at: str
+    project_id: str | None = None
 
 
 class Repo:
@@ -515,13 +516,13 @@ class Repo:
     def move_note(self, note_id: str, folder: str) -> None:
         self.update_note(note_id, folder=folder.strip() or "未分类")
 
-    # ---------------- 文档 ----------------
+    # ---------------- 文档库 ----------------
 
     @staticmethod
     def _row_to_doc(row: sqlite3.Row) -> Document:
         return Document(
             id=row["id"],
-            project_id=row["project_id"],
+            folder=row["folder"],
             rel_path=row["rel_path"],
             orig_name=row["orig_name"],
             ext=row["ext"],
@@ -530,11 +531,11 @@ class Repo:
             text_content=row["text_content"],
             note=row["note"],
             created_at=row["created_at"],
+            project_id=row["project_id"],
         )
 
     def add_document(
         self,
-        project_id: str,
         *,
         rel_path: str,
         orig_name: str,
@@ -543,17 +544,17 @@ class Repo:
         sha256: str,
         text_content: str = "",
         note: str = "",
+        folder: str = "未分类",
+        project_id: str | None = None,
     ) -> Document:
         doc_id = new_id()
         stamp = now_iso()
         self.conn.execute(
-            "INSERT INTO documents (id, project_id, rel_path, orig_name, ext, size,"
-            " sha256, text_content, note, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
-            (doc_id, project_id, rel_path, orig_name, ext, int(size), sha256,
-             text_content, note, stamp),
-        )
-        self.conn.execute(
-            "UPDATE projects SET updated_at = ? WHERE id = ?", (stamp, project_id)
+            "INSERT INTO documents (id, folder, project_id, rel_path, orig_name, ext,"
+            " size, sha256, text_content, note, created_at)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (doc_id, folder.strip() or "未分类", project_id, rel_path, orig_name,
+             ext, int(size), sha256, text_content, note, stamp),
         )
         self.conn.commit()
         return self.get_document(doc_id)
@@ -564,28 +565,72 @@ class Repo:
         ).fetchone()
         return None if row is None else self._row_to_doc(row)
 
-    def list_documents(self, project_id: str, *, newest_first: bool = True) -> list[Document]:
+    def list_documents(
+        self,
+        *,
+        folder: str | None = None,
+        query: str | None = None,
+        newest_first: bool = True,
+    ) -> list[Document]:
+        sql = ["SELECT * FROM documents WHERE deleted_at IS NULL"]
+        params: list[object] = []
+        if folder:
+            sql.append("AND folder = ?")
+            params.append(folder)
+        if query:
+            like = f"%{query}%"
+            sql.append("AND (orig_name LIKE ? OR text_content LIKE ? OR note LIKE ?)")
+            params.extend([like, like, like])
         order = "DESC" if newest_first else "ASC"
-        rows = self.conn.execute(
-            "SELECT * FROM documents WHERE project_id = ? AND deleted_at IS NULL"
-            f" ORDER BY created_at {order}, rowid {order}",
-            (project_id,),
-        ).fetchall()
+        sql.append(f"ORDER BY created_at {order}, rowid {order}")
+        rows = self.conn.execute(" ".join(sql), params).fetchall()
         return [self._row_to_doc(row) for row in rows]
 
-    def find_document_by_hash(self, project_id: str, sha256: str) -> Document | None:
+    def find_document_by_hash(self, sha256: str) -> Document | None:
         row = self.conn.execute(
-            "SELECT * FROM documents WHERE project_id = ? AND sha256 = ?"
-            " AND deleted_at IS NULL",
-            (project_id, sha256),
+            "SELECT * FROM documents WHERE sha256 = ? AND deleted_at IS NULL",
+            (sha256,),
         ).fetchone()
         return None if row is None else self._row_to_doc(row)
 
-    def set_document_note(self, doc_id: str, note: str) -> None:
+    def update_document(self, doc_id: str, **fields: object) -> None:
+        allowed = {"folder", "note", "orig_name", "project_id"}
+        patch = {k: v for k, v in fields.items() if k in allowed}
+        if not patch:
+            return
+        assignments = ", ".join(f"{key} = ?" for key in patch)
         self.conn.execute(
-            "UPDATE documents SET note = ? WHERE id = ?", (note.strip(), doc_id)
+            f"UPDATE documents SET {assignments} WHERE id = ?",
+            (*patch.values(), doc_id),
         )
         self.conn.commit()
+
+    def document_folders(self) -> list[tuple[str, int]]:
+        rows = self.conn.execute(
+            "SELECT folder, COUNT(*) AS n FROM documents WHERE deleted_at IS NULL"
+            " GROUP BY folder ORDER BY n DESC, folder COLLATE NOCASE"
+        ).fetchall()
+        return [(row["folder"], int(row["n"])) for row in rows]
+
+    def rename_document_folder(self, old: str, new: str) -> int:
+        target = new.strip()
+        if not target or target == old:
+            return 0
+        cursor = self.conn.execute(
+            "UPDATE documents SET folder = ? WHERE folder = ? AND deleted_at IS NULL",
+            (target, old),
+        )
+        self.conn.commit()
+        return cursor.rowcount
+
+    def delete_document_folder(self, folder: str) -> int:
+        cursor = self.conn.execute(
+            "UPDATE documents SET deleted_at = ?"
+            " WHERE folder = ? AND deleted_at IS NULL",
+            (now_iso(), folder),
+        )
+        self.conn.commit()
+        return cursor.rowcount
 
     def delete_document(self, doc_id: str) -> Document | None:
         """软删除，进回收站。"""
@@ -597,12 +642,6 @@ class Repo:
         )
         self.conn.commit()
         return doc
-
-    def document_paths(self, project_id: str) -> list[str]:
-        rows = self.conn.execute(
-            "SELECT rel_path FROM documents WHERE project_id = ?", (project_id,)
-        ).fetchall()
-        return [row["rel_path"] for row in rows]
 
     def count_documents(self) -> int:
         return int(

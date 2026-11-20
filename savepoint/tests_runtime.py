@@ -294,26 +294,41 @@ def main() -> int:
     doc_store = DocStore(DATA / "documents")
     for name in ("接口设计.docx", "使用手册.pdf"):
         src = docs_src / name
-        rel, size, digest = doc_store.save(ids[0], src)
+        rel, size, digest = doc_store.save(src)
         text, _warn = extract_text(src)
         repo.add_document(
-            ids[0], rel_path=rel, orig_name=name, ext=src.suffix,
-            size=size, sha256=digest, text_content=text,
+            rel_path=rel, orig_name=name, ext=src.suffix,
+            size=size, sha256=digest, text_content=text, folder="工作",
         )
-    detail.bind_project(ids[0])
-    app.processEvents()
-    report("文档卡片渲染", detail.docs_layout.count() == 2, str(detail.docs_layout.count()))
-    report("元信息含文档数", "份文档" in detail.meta_label.text(), detail.meta_label.text())
     report("文档存储目录存在", doc_store.doc_dir.is_dir())
+    report("文档入库", repo.count_documents() == 2, str(repo.count_documents()))
+
+    window.doc_store = doc_store
+    window.open_documents()
+    app.processEvents()
+    library = window.documents_window
+    report("文档库窗口打开", library is not None and library.isVisible())
+    report("文档库分区树", library.folder_tree.topLevelItemCount() == 2,
+           str(library.folder_tree.topLevelItemCount()))
+    report("文档库列出文档", library.docs_layout.count() == 3,
+           str(library.docs_layout.count()))
+
+    library.search_edit.setText("手册")
+    app.processEvents()
+    report("文档库搜索", library.docs_layout.count() == 2,
+           str(library.docs_layout.count()))
+    library.search_edit.clear()
+    app.processEvents()
 
     from savepoint.ui.document_dialog import DocumentViewer
 
-    doc = repo.list_documents(ids[0])[0]
+    doc = repo.list_documents()[0]
     viewer = DocumentViewer(window, doc, doc_store.abs_path(doc.rel_path))
     viewer.show()
     app.processEvents()
     report("文档查看器可打开", viewer.isVisible())
     viewer.close()
+    library.close()
 
     print("[状态切换]")
     detail.status_combo.setCurrentIndex(detail.status_combo.findData("paused"))

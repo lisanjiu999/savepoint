@@ -142,12 +142,45 @@ CREATE INDEX IF NOT EXISTS idx_docs_sha     ON documents(project_id, sha256);
 CREATE INDEX IF NOT EXISTS idx_docs_deleted ON documents(deleted_at);
 """
 
+# v5：文档从「挂在项目下」改成「独立的文档库」，用分区归类，项目关联变成可选。
+# SQLite 不能直接去掉 NOT NULL，所以重建表再搬数据。
+SCHEMA_V5 = """
+CREATE TABLE documents_v5 (
+    id           TEXT PRIMARY KEY,
+    folder       TEXT NOT NULL DEFAULT '未分类',
+    project_id   TEXT REFERENCES projects(id) ON DELETE SET NULL,
+    rel_path     TEXT NOT NULL,
+    orig_name    TEXT NOT NULL,
+    ext          TEXT NOT NULL DEFAULT '',
+    size         INTEGER NOT NULL DEFAULT 0,
+    sha256       TEXT NOT NULL DEFAULT '',
+    text_content TEXT NOT NULL DEFAULT '',
+    note         TEXT NOT NULL DEFAULT '',
+    created_at   TEXT NOT NULL,
+    deleted_at   TEXT
+);
+
+INSERT INTO documents_v5 (id, folder, project_id, rel_path, orig_name, ext, size,
+                          sha256, text_content, note, created_at, deleted_at)
+SELECT id, '未分类', project_id, rel_path, orig_name, ext, size,
+       sha256, text_content, note, created_at, deleted_at
+FROM documents;
+
+DROP TABLE documents;
+ALTER TABLE documents_v5 RENAME TO documents;
+
+CREATE INDEX IF NOT EXISTS idx_docs_folder  ON documents(folder, created_at);
+CREATE INDEX IF NOT EXISTS idx_docs_sha     ON documents(sha256);
+CREATE INDEX IF NOT EXISTS idx_docs_deleted ON documents(deleted_at);
+"""
+
 # (目标版本, 脚本)。新增变更时追加，不要修改已发布的历史脚本。
 MIGRATIONS: list[tuple[int, str]] = [
     (1, SCHEMA_V1),
     (2, SCHEMA_V2),
     (3, SCHEMA_V3),
     (4, SCHEMA_V4),
+    (5, SCHEMA_V5),
 ]
 
 SCHEMA_VERSION = MIGRATIONS[-1][0]

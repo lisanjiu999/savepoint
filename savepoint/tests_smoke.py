@@ -48,7 +48,7 @@ def main() -> int:
 
     print("[1] 数据库与迁移")
     conn = open_database(config.DB_PATH)
-    check("user_version", current_version(conn) == 4)
+    check("user_version", current_version(conn) == 5)
     fk = conn.execute("PRAGMA foreign_keys").fetchone()[0]
     check("foreign_keys 开启", fk == 1)
 
@@ -182,29 +182,85 @@ def main() -> int:
 
     doc_store = DocStore(TEST_DIR / "documents")
     src = docs_source / "设计.docx"
-    doc_rel, doc_size, doc_hash = doc_store.save(project.id, src)
+    doc_rel, doc_size, doc_hash = doc_store.save(src)
     check("文档落盘", doc_store.abs_path(doc_rel).is_file())
     check("文档大小正确", doc_size == src.stat().st_size)
 
     text, _warn = extract_text(src)
     saved_doc = repo.add_document(
-        project.id, rel_path=doc_rel, orig_name="设计.docx", ext=".docx",
-        size=doc_size, sha256=doc_hash, text_content=text,
+        rel_path=doc_rel, orig_name="设计.docx", ext=".docx",
+        size=doc_size, sha256=doc_hash, text_content=text, folder="工作",
     )
-    check("文档入库", len(repo.list_documents(project.id)) == 1)
+    check("文档入库", len(repo.list_documents()) == 1)
+    check("文档有分区", repo.get_document(saved_doc.id).folder == "工作")
     check("文档内容已存", "接口设计" in repo.get_document(saved_doc.id).text_content)
-    check("文档按哈希去重", repo.find_document_by_hash(project.id, doc_hash) is not None)
+    check("文档按哈希去重", repo.find_document_by_hash(doc_hash) is not None)
     check("搜索命中文档正文", any(
         r["kind"] == "document" for r in repo.search_all("接口设计")
     ))
+    check("分区统计", ("工作", 1) in repo.document_folders())
+    check("按分区筛选", len(repo.list_documents(folder="工作")) == 1)
+    check("按分区筛选（无匹配）", repo.list_documents(folder="别的") == [])
+
+    repo.rename_document_folder("工作", "资料")
+    check("分区改名", repo.get_document(saved_doc.id).folder == "资料")
+    repo.update_document(saved_doc.id, note="季度汇报用")
+    check("文档备注", repo.get_document(saved_doc.id).note == "季度汇报用")
 
     repo.delete_document(saved_doc.id)
-    check("删除文档后列表为空", repo.list_documents(project.id) == [])
+    check("删除文档后列表为空", repo.list_documents() == [])
     check("文档进回收站", any(
         item["kind"] == "document" for item in repo.trash_items()
     ))
     repo.restore_item("document", saved_doc.id)
-    check("文档可恢复", len(repo.list_documents(project.id)) == 1)
+    check("文档可恢复", len(repo.list_documents()) == 1)
+
+    check("文档总数", repo.count_documents() == 1)
+
+    print("[4.6] v4 → v5 迁移（老库升级不丢文档）")
+    import sqlite3
+
+    from savepoint.core.db import MIGRATIONS, connect, migrate
+
+    old_db = TEST_DIR / "upgrade" / "projects.db"
+    old_db.parent.mkdir(parents=True, exist_ok=True)
+    old_conn = connect(old_db)
+    for target, script in MIGRATIONS:
+        if target > 4:
+            break
+        old_conn.executescript(script)
+        old_conn.execute(f"PRAGMA user_version = {target}")
+    old_conn.commit()
+    check("旧库停在 v4", old_conn.execute("PRAGMA user_version").fetchone()[0] == 4)
+
+    old_conn.execute(
+        "INSERT INTO projects (id, name, status, path, summary, notes, next_step,"
+        " created_at, updated_at) VALUES ('p-old','老项目','active','','','','',"
+        "'2026-01-01T00:00:00','2026-01-01T00:00:00')"
+    )
+    old_conn.execute(
+        "INSERT INTO documents (id, project_id, rel_path, orig_name, ext, size,"
+        " sha256, text_content, note, created_at)"
+        " VALUES ('d-old','p-old','a.docx','旧文档.docx','.docx',123,'hash',"
+        "'旧正文','','2026-01-01T00:00:00')"
+    )
+    old_conn.commit()
+
+    migrate(old_conn)
+    check("升级到 v5", old_conn.execute("PRAGMA user_version").fetchone()[0] == 5)
+    row = old_conn.execute("SELECT * FROM documents WHERE id='d-old'").fetchone()
+    check("旧文档还在", row is not None)
+    check("旧文档内容未丢", row["text_content"] == "旧正文" if row else False)
+    check("旧文档归到默认分区", row["folder"] == "未分类" if row else False)
+    check("旧文档保留原项目关联", row["project_id"] == "p-old" if row else False)
+
+    # 项目删除后文档应保留（SET NULL），不再级联删除
+    old_conn.execute("DELETE FROM projects WHERE id='p-old'")
+    old_conn.commit()
+    row = old_conn.execute("SELECT * FROM documents WHERE id='d-old'").fetchone()
+    check("删项目后文档仍在", row is not None)
+    check("删项目后关联置空", row["project_id"] is None if row else False)
+    old_conn.close()
 
     print("[5] 备份恢复")
     snap = backup_mod.make_snapshot(min_interval_hours=0, keep=3)

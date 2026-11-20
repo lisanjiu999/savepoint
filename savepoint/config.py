@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 
 APP_NAME = "SavePoint"
-APP_VERSION = "1.7.0"
+APP_VERSION = "1.8.0"
 # 任务栏分组要用稳定 ID，否则 Windows 会把程序归到 python 那一组
 APP_ID = "SavePoint.App.1"
 

@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import hashlib
 import re
-import shutil
 import zipfile
 from datetime import datetime
 from pathlib import Path
@@ -263,8 +262,11 @@ class DocStore:
     def abs_path(self, rel: str) -> Path:
         return self.doc_dir / rel
 
-    def save(self, project_id: str, source: Path) -> tuple[str, int, str]:
-        """复制文件进数据目录，返回 (相对路径, 字节数, sha256)。"""
+    def save(self, source: Path) -> tuple[str, int, str]:
+        """复制文件进文档库，返回 (相对路径, 字节数, sha256)。
+
+        文件平铺存放，分区只是数据库里的一个字段，这样重命名分区不需要移动文件。
+        """
         try:
             data = source.read_bytes()
         except OSError as exc:
@@ -279,7 +281,7 @@ class DocStore:
         digest = sha256_of(data)
         stamp = datetime.now()
         name = f"{stamp:%Y%m%d-%H%M%S}_{digest[:8]}_{_safe_name(source.name)}"
-        rel = f"{project_id}/{name}"
+        rel = name
         target = self.doc_dir / rel
         target.parent.mkdir(parents=True, exist_ok=True)
         if not target.exists():
@@ -299,8 +301,3 @@ class DocStore:
                     path.unlink()
             except OSError:
                 pass
-
-    def remove_project(self, project_id: str) -> None:
-        folder = self.doc_dir / project_id
-        if folder.exists():
-            shutil.rmtree(folder, ignore_errors=True)
