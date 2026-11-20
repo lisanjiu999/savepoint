@@ -354,6 +354,35 @@ def main() -> int:
         for i in range(library.folder_tree.topLevelItemCount())
     ))
 
+    # 分区能展开，子节点是文档名
+    work_node = None
+    for i in range(library.folder_tree.topLevelItemCount()):
+        node = library.folder_tree.topLevelItem(i)
+        if node.text(0).startswith("工作"):
+            work_node = node
+            break
+    report("分区有文档子节点", work_node is not None and work_node.childCount() == 2,
+           str(work_node.childCount() if work_node else "无工作分区"))
+    if work_node is not None:
+        library._on_folder_clicked(work_node, 0)  # noqa: SLF001
+        app.processEvents()
+
+        def find_work():
+            for i in range(library.folder_tree.topLevelItemCount()):
+                node = library.folder_tree.topLevelItem(i)
+                if node.text(0).startswith("工作"):
+                    return node
+            return None
+
+        fresh = find_work()   # 重建后旧节点已销毁，重新取
+        report("点分区会展开", fresh is not None and fresh.isExpanded())
+        report("点分区右栏显示文档", library.docs_layout.count() == 3,
+               str(library.docs_layout.count()))
+        report("子节点是文档",
+               fresh is not None and
+               fresh.child(0).data(0, QtCore_Qt.UserRole)[0] == "doc",
+               str(fresh.child(0).data(0, QtCore_Qt.UserRole)) if fresh else "无")
+
     # 切到空分区应显示 0 份文档
     for i in range(library.folder_tree.topLevelItemCount()):
         item = library.folder_tree.topLevelItem(i)

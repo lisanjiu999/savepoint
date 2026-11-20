@@ -33,7 +33,7 @@ from .. import config
 from ..core import paths
 from ..core.documents import DocStore, DocumentError, extract_text, is_document, kind_of
 from .document_dialog import DocumentImportDialog, DocumentViewer, kind_color
-from .icons import folder_icon
+from .icons import folder_icon, note_icon
 from .selection import GlowDelegate, ensure_animating
 
 DEFAULT_FOLDER = "未分类"
@@ -170,30 +170,63 @@ class DocumentLibraryWindow(QWidget):
         if current is None:
             return
         self._type = current.data(Qt.UserRole)
-        if self._type is not None:
-            self._folder = None
+        # 类型和分区可以叠加：类型决定看哪些格式，分区决定看哪一块
         self._reload_folders()
         self._reload_docs()
 
+    def _type_suffixes(self) -> list[str] | None:
+        if self._type is None:
+            return None
+        from ..core.documents import suffixes_of_group
+
+        return suffixes_of_group(self._type)
+
     def _reload_folders(self) -> None:
+        # 记住哪些分区是展开的，重建后恢复
+        expanded: set[str] = set()
+        for index in range(self.folder_tree.topLevelItemCount()):
+            node = self.folder_tree.topLevelItem(index)
+            data = node.data(0, Qt.UserRole)
+            if isinstance(data, tuple) and data[0] == "folder" and node.isExpanded():
+                expanded.add(data[1])
+
+        suffixes = self._type_suffixes()
+        visible = self.repo.list_documents(suffixes=suffixes)
+
         self.folder_tree.blockSignals(True)
         self.folder_tree.clear()
 
-        total = self.repo.count_documents()
-        all_item = QTreeWidgetItem([f"全部分区　{total}"])
+        all_item = QTreeWidgetItem([f"全部分区　{len(visible)}"])
         all_item.setIcon(0, folder_icon("全部分区", True, dark=False))
-        all_item.setData(0, Qt.UserRole, None)
+        all_item.setData(0, Qt.UserRole, ("all", None))
         self.folder_tree.addTopLevelItem(all_item)
 
-        for name, count in self.repo.document_folders():
-            item = QTreeWidgetItem([f"{name}　{count}"])
-            item.setIcon(0, folder_icon(name, True, dark=False))
-            item.setData(0, Qt.UserRole, name)
-            self.folder_tree.addTopLevelItem(item)
+        by_folder: dict[str, list] = {}
+        for doc in visible:
+            by_folder.setdefault(doc.folder, []).append(doc)
+
+        for name, _count in self.repo.document_folders():
+            docs = by_folder.get(name, [])
+            node = QTreeWidgetItem([f"{name}　{len(docs)}"])
+            node.setIcon(0, folder_icon(name, True, dark=False))
+            node.setData(0, Qt.UserRole, ("folder", name))
+            font = node.font(0)
+            font.setBold(True)
+            node.setFont(0, font)
+            for doc in docs:
+                child = QTreeWidgetItem([doc.orig_name])
+                child.setIcon(0, note_icon(doc.orig_name))
+                child.setData(0, Qt.UserRole, ("doc", doc.id))
+                child.setToolTip(0, f"{paths.human_size(doc.size)} · "
+                                    f"{paths.human_time(doc.created_at)}")
+                node.addChild(child)
+            self.folder_tree.addTopLevelItem(node)
+            node.setExpanded(name in expanded or name == self._folder)
 
         target = 0
         for index in range(self.folder_tree.topLevelItemCount()):
-            if self.folder_tree.topLevelItem(index).data(0, Qt.UserRole) == self._folder:
+            data = self.folder_tree.topLevelItem(index).data(0, Qt.UserRole)
+            if isinstance(data, tuple) and data[1] == self._folder:
                 target = index
                 break
         self.folder_tree.setCurrentItem(self.folder_tree.topLevelItem(target))
@@ -273,26 +306,41 @@ class DocumentLibraryWindow(QWidget):
     # ---------------- 分区 ----------------
 
     def _on_folder_clicked(self, item: QTreeWidgetItem, _column: int) -> None:
-        self._folder = item.data(0, Qt.UserRole)
-        if self._folder is not None:
-            self._type = None
-            self._reload_types()
+        data = item.data(0, Qt.UserRole)
+        if not isinstance(data, tuple):
+            return
+        kind, value = data
+        if kind == "doc":
+            # 点文档名直接打开
+            self.view_document(value)
+            return
+        # 点分区：右侧切到这个分区，同时展开
+        self._folder = value
+        item.setExpanded(True)
         self._reload_folders()
         self._reload_docs()
 
     def _on_folder_menu(self, pos) -> None:  # noqa: ANN001 - Qt 回调
         item = self.folder_tree.itemAt(pos)
-        folder = item.data(0, Qt.UserRole) if item is not None else ""
+        data = item.data(0, Qt.UserRole) if item is not None else None
+        kind, folder = ("", None)
+        if isinstance(data, tuple):
+            kind, folder = data
+
         menu = QMenu(self)
-        if not folder:
-            # 点在空白处或「全部文档」上：只给新建
-            menu.addAction("新建分区…", self.create_folder)
-        else:
+        if kind == "doc":
+            doc_id = folder
+            menu.addAction("打开", lambda: self.view_document(doc_id))
+            menu.addSeparator()
+            menu.addAction("删除文档…", lambda: self.delete_document(doc_id))
+        elif kind == "folder":
             menu.addAction("导入文件到此分区…", lambda: self.pick_files(folder))
             menu.addAction("重命名分区…", lambda: self.rename_folder(folder))
             menu.addSeparator()
             menu.addAction("删除分区…", lambda: self.delete_folder(folder))
             menu.addSeparator()
+            menu.addAction("新建分区…", self.create_folder)
+        else:
             menu.addAction("新建分区…", self.create_folder)
         menu.exec(self.folder_tree.viewport().mapToGlobal(pos))
 
