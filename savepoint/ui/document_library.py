@@ -225,17 +225,18 @@ class DocumentLibraryWindow(QWidget):
 
     def _on_folder_menu(self, pos) -> None:  # noqa: ANN001 - Qt 回调
         item = self.folder_tree.itemAt(pos)
-        if item is None:
-            return
-        folder = item.data(0, Qt.UserRole)
+        folder = item.data(0, Qt.UserRole) if item is not None else ""
         menu = QMenu(self)
-        if folder is None:
+        if not folder:
+            # 点在空白处或「全部文档」上：只给新建
             menu.addAction("新建分区…", self.create_folder)
         else:
             menu.addAction("导入文件到此分区…", lambda: self.pick_files(folder))
             menu.addAction("重命名分区…", lambda: self.rename_folder(folder))
             menu.addSeparator()
             menu.addAction("删除分区…", lambda: self.delete_folder(folder))
+            menu.addSeparator()
+            menu.addAction("新建分区…", self.create_folder)
         menu.exec(self.folder_tree.viewport().mapToGlobal(pos))
 
     def _prompt(self, title: str, label: str, default: str = "") -> str | None:
@@ -250,9 +251,13 @@ class DocumentLibraryWindow(QWidget):
         name = self._prompt("新建分区", "给分区起个名字，例如：合同 / 报表 / 学习资料")
         if not name:
             return
-        self._folder = name
+        saved = self.repo.create_document_folder(name)
+        if not saved:
+            return
+        self._folder = saved
         self._reload_folders()
         self._reload_docs()
+        self.changed.emit()
 
     def rename_folder(self, folder: str) -> None:
         name = self._prompt("重命名分区", "新的分区名", folder)
@@ -262,14 +267,18 @@ class DocumentLibraryWindow(QWidget):
         if self._folder == folder:
             self._folder = name
         self.refresh()
+        self.changed.emit()
 
     def delete_folder(self, folder: str) -> None:
         count = dict(self.repo.document_folders()).get(folder, 0)
-        if not count:
-            return
+        if count:
+            question = (
+                f"「{folder}」里有 {count} 份文档，全部移进回收站？\n30 天内可以恢复。"
+            )
+        else:
+            question = f"「{folder}」是空分区，确定删除？"
         confirm = QMessageBox.question(
-            self, "删除分区",
-            f"「{folder}」里有 {count} 份文档，全部移进回收站？\n30 天内可以恢复。",
+            self, "删除分区", question,
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
         )
         if confirm != QMessageBox.Yes:

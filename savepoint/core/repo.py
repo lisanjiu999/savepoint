@@ -549,11 +549,16 @@ class Repo:
     ) -> Document:
         doc_id = new_id()
         stamp = now_iso()
+        folder_name = folder.strip() or "未分类"
+        self.conn.execute(
+            "INSERT OR IGNORE INTO document_folders (name, created_at) VALUES (?, ?)",
+            (folder_name, stamp),
+        )
         self.conn.execute(
             "INSERT INTO documents (id, folder, project_id, rel_path, orig_name, ext,"
             " size, sha256, text_content, note, created_at)"
             " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-            (doc_id, folder.strip() or "未分类", project_id, rel_path, orig_name,
+            (doc_id, folder_name, project_id, rel_path, orig_name,
              ext, int(size), sha256, text_content, note, stamp),
         )
         self.conn.commit()
@@ -598,6 +603,14 @@ class Repo:
         patch = {k: v for k, v in fields.items() if k in allowed}
         if not patch:
             return
+        if "folder" in patch:
+            folder_name = str(patch["folder"]).strip() or "未分类"
+            patch["folder"] = folder_name
+            self.conn.execute(
+                "INSERT OR IGNORE INTO document_folders (name, created_at)"
+                " VALUES (?, ?)",
+                (folder_name, now_iso()),
+            )
         assignments = ", ".join(f"{key} = ?" for key in patch)
         self.conn.execute(
             f"UPDATE documents SET {assignments} WHERE id = ?",
@@ -606,31 +619,59 @@ class Repo:
         self.conn.commit()
 
     def document_folders(self) -> list[tuple[str, int]]:
+        """所有分区及其文档数。空分区也返回，因为是单独存的。"""
         rows = self.conn.execute(
-            "SELECT folder, COUNT(*) AS n FROM documents WHERE deleted_at IS NULL"
-            " GROUP BY folder ORDER BY n DESC, folder COLLATE NOCASE"
+            "SELECT f.name AS name,"
+            " (SELECT COUNT(*) FROM documents d"
+            "  WHERE d.folder = f.name AND d.deleted_at IS NULL) AS n"
+            " FROM document_folders f"
+            " ORDER BY n DESC, f.name COLLATE NOCASE"
         ).fetchall()
-        return [(row["folder"], int(row["n"])) for row in rows]
+        return [(row["name"], int(row["n"])) for row in rows]
+
+    def create_document_folder(self, name: str) -> str:
+        target = name.strip()
+        if not target:
+            return ""
+        self.conn.execute(
+            "INSERT OR IGNORE INTO document_folders (name, created_at) VALUES (?, ?)",
+            (target, now_iso()),
+        )
+        self.conn.commit()
+        row = self.conn.execute(
+            "SELECT name FROM document_folders WHERE name = ? COLLATE NOCASE", (target,)
+        ).fetchone()
+        return row["name"] if row else target
 
     def rename_document_folder(self, old: str, new: str) -> int:
         target = new.strip()
         if not target or target == old:
             return 0
+        self.conn.execute(
+            "UPDATE document_folders SET name = ? WHERE name = ? COLLATE NOCASE",
+            (target, old),
+        )
         cursor = self.conn.execute(
-            "UPDATE documents SET folder = ? WHERE folder = ? AND deleted_at IS NULL",
+            "UPDATE documents SET folder = ? WHERE folder = ? COLLATE NOCASE"
+            " AND deleted_at IS NULL",
             (target, old),
         )
         self.conn.commit()
         return cursor.rowcount
 
     def delete_document_folder(self, folder: str) -> int:
+        """删分区：里面的文档进回收站，分区记录本身也删掉。"""
         cursor = self.conn.execute(
             "UPDATE documents SET deleted_at = ?"
-            " WHERE folder = ? AND deleted_at IS NULL",
+            " WHERE folder = ? COLLATE NOCASE AND deleted_at IS NULL",
             (now_iso(), folder),
         )
+        moved = cursor.rowcount
+        self.conn.execute(
+            "DELETE FROM document_folders WHERE name = ? COLLATE NOCASE", (folder,)
+        )
         self.conn.commit()
-        return cursor.rowcount
+        return moved
 
     def delete_document(self, doc_id: str) -> Document | None:
         """软删除，进回收站。"""

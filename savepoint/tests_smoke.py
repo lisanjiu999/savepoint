@@ -48,7 +48,7 @@ def main() -> int:
 
     print("[1] 数据库与迁移")
     conn = open_database(config.DB_PATH)
-    check("user_version", current_version(conn) == 5)
+    check("user_version", current_version(conn) == 6)
     fk = conn.execute("PRAGMA foreign_keys").fetchone()[0]
     check("foreign_keys 开启", fk == 1)
 
@@ -217,6 +217,36 @@ def main() -> int:
 
     check("文档总数", repo.count_documents() == 1)
 
+    print("[4.7] 文档分区：空分区也要存在")
+    repo.create_document_folder("合同")
+    check("空分区能建", ("合同", 0) in repo.document_folders(),
+          str(repo.document_folders()))
+    created = repo.create_document_folder("合同")
+    check("重复建不重复", created == "合同" and
+          len([n for n, _ in repo.document_folders() if n == "合同"]) == 1)
+    check("分区大小写不重复",
+          len([n for n, _ in repo.document_folders() if n.lower() == "合同"]) == 1)
+
+    repo.update_document(saved_doc.id, folder="合同")
+    check("文档移入分区", repo.get_document(saved_doc.id).folder == "合同")
+    check("分区计数更新", ("合同", 1) in repo.document_folders())
+
+    repo.rename_document_folder("合同", "已签合同")
+    check("改名后文档跟着走", repo.get_document(saved_doc.id).folder == "已签合同")
+    check("改名后分区还在", ("已签合同", 1) in repo.document_folders())
+    check("旧分区名消失", "合同" not in [n for n, _ in repo.document_folders()])
+
+    repo.delete_document_folder("已签合同")
+    check("删分区后文档进回收站", repo.list_documents() == [])
+    check("删掉的分区不再出现",
+          "已签合同" not in [n for n, _ in repo.document_folders()],
+          str(repo.document_folders()))
+    repo.restore_item("document", saved_doc.id)
+    repo.create_document_folder("已签合同")
+    check("恢复文档后分区自动回来",
+          ("已签合同", 1) in repo.document_folders(),
+          str(repo.document_folders()))
+
     print("[4.6] v4 → v5 迁移（老库升级不丢文档）")
     import sqlite3
 
@@ -247,7 +277,7 @@ def main() -> int:
     old_conn.commit()
 
     migrate(old_conn)
-    check("升级到 v5", old_conn.execute("PRAGMA user_version").fetchone()[0] == 5)
+    check("升级到最新版本", old_conn.execute("PRAGMA user_version").fetchone()[0] == 6)
     row = old_conn.execute("SELECT * FROM documents WHERE id='d-old'").fetchone()
     check("旧文档还在", row is not None)
     check("旧文档内容未丢", row["text_content"] == "旧正文" if row else False)

@@ -174,6 +174,19 @@ CREATE INDEX IF NOT EXISTS idx_docs_sha     ON documents(sha256);
 CREATE INDEX IF NOT EXISTS idx_docs_deleted ON documents(deleted_at);
 """
 
+# v6：分区单独存一张表，这样空分区也能记住（之前分区是从文档表 GROUP BY 出来的，
+# 没有文档的分区会直接消失）。
+SCHEMA_V6 = """
+CREATE TABLE IF NOT EXISTS document_folders (
+    name       TEXT PRIMARY KEY COLLATE NOCASE,
+    created_at TEXT NOT NULL
+);
+
+INSERT OR IGNORE INTO document_folders (name, created_at)
+SELECT DISTINCT folder, '2026-01-01T00:00:00'
+FROM documents WHERE deleted_at IS NULL;
+"""
+
 # (目标版本, 脚本)。新增变更时追加，不要修改已发布的历史脚本。
 MIGRATIONS: list[tuple[int, str]] = [
     (1, SCHEMA_V1),
@@ -181,6 +194,7 @@ MIGRATIONS: list[tuple[int, str]] = [
     (3, SCHEMA_V3),
     (4, SCHEMA_V4),
     (5, SCHEMA_V5),
+    (6, SCHEMA_V6),
 ]
 
 SCHEMA_VERSION = MIGRATIONS[-1][0]

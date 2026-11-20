@@ -320,6 +320,28 @@ def main() -> int:
     library.search_edit.clear()
     app.processEvents()
 
+    # 空分区必须真的出现在树里
+    before = library.folder_tree.topLevelItemCount()
+    repo.create_document_folder("空分区测试")
+    library.refresh()
+    app.processEvents()
+    report("空分区出现在树里", library.folder_tree.topLevelItemCount() == before + 1,
+           f"{before} -> {library.folder_tree.topLevelItemCount()}")
+    report("空分区可选中并显示 0", any(
+        library.folder_tree.topLevelItem(i).text(0).startswith("空分区测试")
+        for i in range(library.folder_tree.topLevelItemCount())
+    ))
+
+    # 切到空分区应显示 0 份文档
+    for i in range(library.folder_tree.topLevelItemCount()):
+        item = library.folder_tree.topLevelItem(i)
+        if item.text(0).startswith("空分区测试"):
+            library._on_folder_clicked(item, 0)  # noqa: SLF001
+            break
+    app.processEvents()
+    report("切到空分区列表为空", library.docs_layout.count() == 1,
+           str(library.docs_layout.count()))
+
     from savepoint.ui.document_dialog import DocumentViewer
 
     doc = repo.list_documents()[0]
