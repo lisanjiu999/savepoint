@@ -10,6 +10,8 @@ from __future__ import annotations
 import os
 import shutil
 import sys
+
+from savepoint.console import ensure_utf8_console
 from pathlib import Path
 
 BASE = Path(__file__).resolve().parent.parent
@@ -27,6 +29,7 @@ _WINDOW = None
 
 def main() -> int:
     global _APP, _WINDOW
+    ensure_utf8_console()
     from PySide6.QtWidgets import QApplication
 
     from savepoint import config

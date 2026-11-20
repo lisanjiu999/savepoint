@@ -10,6 +10,8 @@ import json
 import os
 import shutil
 import sys
+
+from savepoint.console import ensure_utf8_console
 from pathlib import Path
 
 BASE = Path(__file__).resolve().parent.parent
@@ -38,6 +40,7 @@ def report(name: str, ok: bool, detail: str = "") -> None:
 
 def main() -> int:
     global _APP, _WINDOW
+    ensure_utf8_console()
     from PySide6.QtCore import QTimer
     from PySide6.QtGui import QFontInfo, QGuiApplication
     from PySide6.QtWidgets import QApplication, QLabel, QScrollArea

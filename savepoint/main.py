@@ -18,6 +18,7 @@ from PySide6.QtGui import QFont, QIcon
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from . import config
+from .console import ensure_utf8_console
 from .core.db import open_database
 from .core.repo import Repo
 from .core.single_instance import SingleInstance
@@ -102,6 +103,7 @@ def _create_window(repo, store):  # noqa: ANN001, ANN202
 def main() -> int:
     global _APP, _WINDOW, _INSTANCE
 
+    ensure_utf8_console()
     _set_app_user_model_id()
 
     app = QApplication(sys.argv)

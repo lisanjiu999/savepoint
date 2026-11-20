@@ -10,6 +10,8 @@ from __future__ import annotations
 import os
 import shutil
 import sys
+
+from savepoint.console import ensure_utf8_console
 import traceback
 from pathlib import Path
 
@@ -37,6 +39,7 @@ def check(name: str, condition: bool, detail: str = "") -> None:
 
 def main() -> int:
     global _APP, _WINDOW
+    ensure_utf8_console()
     from savepoint import config
     from savepoint.core import backup as backup_mod
     from savepoint.core.db import current_version, open_database
