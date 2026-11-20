@@ -292,6 +292,49 @@ def main() -> int:
     check("删项目后关联置空", row["project_id"] is None if row else False)
     old_conn.close()
 
+    print("[4.8] 按文件类型分类")
+    from savepoint.core.documents import type_group_of
+
+    check("docx 归 Word", type_group_of(".docx") == "Word")
+    check("doc 也归 Word", type_group_of(".doc") == "Word")
+    check("pdf 归 PDF", type_group_of(".PDF") == "PDF", "大小写不敏感")
+    check("xlsx 归 Excel", type_group_of(".xlsx") == "Excel")
+    check("md 归 Markdown", type_group_of(".md") == "Markdown")
+    check("py 归 代码", type_group_of(".py") == "代码")
+    check("未知后缀归其他", type_group_of(".psd") == "其他")
+
+    # 往库里再放几份不同类型的文件
+    for name, ext in (("笔记.md", ".md"), ("报表.pdf", ".pdf")):
+        src2 = docs_source / name
+        if not src2.is_file():
+            if ext == ".md":
+                src2.write_text("# 备忘\n一些内容", encoding="utf-8")
+            else:
+                build_pdf(src2)
+        rel2, size2, hash2 = doc_store.save(src2)
+        repo.add_document(
+            rel_path=rel2, orig_name=name, ext=ext, size=size2, sha256=hash2,
+            text_content=extract_text(src2)[0], folder="已签合同",
+        )
+
+    types = dict(repo.document_types())
+    check("类型统计含 Word", types.get("Word") == 1, str(types))
+    check("类型统计含 Markdown", types.get("Markdown") == 1, str(types))
+    check("类型统计含 PDF", types.get("PDF") == 1, str(types))
+    check("类型顺序固定", list(types) == ["Word", "PDF", "Markdown"], str(list(types)))
+
+    only_md = repo.list_documents(suffixes=[".md"])
+    check("按类型筛选只返回 md", len(only_md) == 1 and only_md[0].ext == ".md",
+          str([d.orig_name for d in only_md]))
+    only_office = repo.list_documents(suffixes=[".doc", ".docx"])
+    check("Word 组包含 doc/docx", len(only_office) == 1, str(len(only_office)))
+    check("空后缀列表返回空", repo.list_documents(suffixes=[]) == [])
+
+    # 类型 + 分区可以叠加
+    combo = repo.list_documents(folder="已签合同", suffixes=[".pdf"])
+    check("类型和分区叠加筛选", len(combo) == 1 and combo[0].ext == ".pdf",
+          str([d.orig_name for d in combo]))
+
     print("[5] 备份恢复")
     snap = backup_mod.make_snapshot(min_interval_hours=0, keep=3)
     check("生成快照", snap is not None and snap.is_file())

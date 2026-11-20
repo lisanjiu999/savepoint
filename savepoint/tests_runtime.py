@@ -320,6 +320,28 @@ def main() -> int:
     library.search_edit.clear()
     app.processEvents()
 
+    report("类型列表有内容", library.type_list.count() >= 3,
+           str(library.type_list.count()))
+    type_names = [
+        library.type_list.item(i).text()
+        for i in range(library.type_list.count())
+    ]
+    report("类型列表含 Word", any("Word" in t for t in type_names), str(type_names))
+
+    # 选中 Word 类型，只应剩 docx
+    for i in range(library.type_list.count()):
+        if library.type_list.item(i).data(QtCore_Qt.UserRole) == "Word":
+            library.type_list.setCurrentRow(i)
+            break
+    app.processEvents()
+    report("按类型筛选生效", library.docs_layout.count() == 2,
+           str(library.docs_layout.count()))
+    report("筛选标题显示类型", "Word" in library.count_label.text(),
+           library.count_label.text())
+
+    library.type_list.setCurrentRow(0)
+    app.processEvents()
+
     # 空分区必须真的出现在树里
     before = library.folder_tree.topLevelItemCount()
     repo.create_document_folder("空分区测试")

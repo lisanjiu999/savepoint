@@ -17,6 +17,8 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMenu,
     QMessageBox,
     QPushButton,
@@ -45,6 +47,7 @@ class DocumentLibraryWindow(QWidget):
         self.repo = repo
         self.doc_store = doc_store
         self._folder: str | None = None
+        self._type: str | None = None
         self._current_id: str | None = None
 
         self.setWindowTitle(f"{config.APP_NAME} · 文档库")
@@ -83,9 +86,21 @@ class DocumentLibraryWindow(QWidget):
         # 左：分区
         left = QVBoxLayout()
         left.setSpacing(6)
-        hint = QLabel("分区")
+        hint = QLabel("按类型")
         hint.setObjectName("SectionTitle")
         left.addWidget(hint)
+
+        self.type_list = QListWidget()
+        self.type_list.setFixedWidth(190)
+        self.type_list.setItemDelegate(GlowDelegate(self.type_list))
+        ensure_animating(self.type_list)
+        self.type_list.currentItemChanged.connect(self._on_type_changed)
+        left.addWidget(self.type_list)
+
+        folder_hint = QLabel("分区")
+        folder_hint.setObjectName("SectionTitle")
+        left.addWidget(folder_hint)
+
         self.folder_tree = QTreeWidget()
         self.folder_tree.setHeaderHidden(True)
         self.folder_tree.setFixedWidth(190)
@@ -125,6 +140,38 @@ class DocumentLibraryWindow(QWidget):
     # ---------------- 数据 ----------------
 
     def refresh(self) -> None:
+        self._reload_types()
+        self._reload_folders()
+        self._reload_docs()
+
+    def _reload_types(self) -> None:
+        self.type_list.blockSignals(True)
+        self.type_list.clear()
+
+        total = self.repo.count_documents()
+        all_item = QListWidgetItem(f"全部文档　{total}")
+        all_item.setData(Qt.UserRole, None)
+        self.type_list.addItem(all_item)
+
+        for name, count in self.repo.document_types():
+            item = QListWidgetItem(f"{name}　{count}")
+            item.setData(Qt.UserRole, name)
+            self.type_list.addItem(item)
+
+        target = 0
+        for index in range(self.type_list.count()):
+            if self.type_list.item(index).data(Qt.UserRole) == self._type:
+                target = index
+                break
+        self.type_list.setCurrentRow(target)
+        self.type_list.blockSignals(False)
+
+    def _on_type_changed(self, current, previous) -> None:  # noqa: ANN001 - Qt 回调
+        if current is None:
+            return
+        self._type = current.data(Qt.UserRole)
+        if self._type is not None:
+            self._folder = None
         self._reload_folders()
         self._reload_docs()
 
@@ -133,8 +180,8 @@ class DocumentLibraryWindow(QWidget):
         self.folder_tree.clear()
 
         total = self.repo.count_documents()
-        all_item = QTreeWidgetItem([f"全部文档　{total}"])
-        all_item.setIcon(0, folder_icon("全部文档", True, dark=False))
+        all_item = QTreeWidgetItem([f"全部分区　{total}"])
+        all_item.setIcon(0, folder_icon("全部分区", True, dark=False))
         all_item.setData(0, Qt.UserRole, None)
         self.folder_tree.addTopLevelItem(all_item)
 
@@ -160,14 +207,21 @@ class DocumentLibraryWindow(QWidget):
                 widget.setParent(None)
                 widget.deleteLater()
 
+        suffixes = None
+        if self._type is not None:
+            from ..core.documents import suffixes_of_group
+
+            suffixes = suffixes_of_group(self._type)
+
         docs = self.repo.list_documents(
             folder=self._folder,
             query=self.search_edit.text().strip() or None,
+            suffixes=suffixes,
         )
         for doc in docs:
             self.docs_layout.insertWidget(self.docs_layout.count() - 1, self._card(doc))
 
-        scope = self._folder or "全部"
+        scope = self._type or self._folder or "全部"
         self.count_label.setText(f"{scope} · {len(docs)} 份文档")
         self.drop_hint.setVisible(not docs)
 
@@ -220,6 +274,9 @@ class DocumentLibraryWindow(QWidget):
 
     def _on_folder_clicked(self, item: QTreeWidgetItem, _column: int) -> None:
         self._folder = item.data(0, Qt.UserRole)
+        if self._folder is not None:
+            self._type = None
+            self._reload_types()
         self._reload_folders()
         self._reload_docs()
 

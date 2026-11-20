@@ -67,6 +67,38 @@ def is_document(path: Path) -> bool:
     return path.suffix.lower() in DOC_SUFFIXES
 
 
+# 按后缀自动归类：用户不用手动整理，拖进来就归位
+TYPE_GROUPS: list[tuple[str, set[str]]] = [
+    ("Word", {".docx", ".doc"}),
+    ("PDF", {".pdf"}),
+    ("Excel", {".xlsx", ".xls"}),
+    ("PPT", {".pptx", ".ppt"}),
+    ("Markdown", {".md"}),
+    ("文本", {".txt", ".csv", ".json", ".log", ".xml", ".yml", ".yaml", ".ini"}),
+    ("代码", {".py", ".js", ".ts", ".html", ".htm", ".sql"}),
+]
+OTHER_GROUP = "其他"
+
+# 分组顺序固定，界面上不会跳来跳去
+TYPE_ORDER = [name for name, _suffixes in TYPE_GROUPS] + [OTHER_GROUP]
+
+
+def type_group_of(suffix: str) -> str:
+    """把一个后缀映射到类型分组。"""
+    lowered = (suffix or "").lower()
+    for name, suffixes in TYPE_GROUPS:
+        if lowered in suffixes:
+            return name
+    return OTHER_GROUP
+
+
+def suffixes_of_group(group: str) -> list[str]:
+    for name, suffixes in TYPE_GROUPS:
+        if name == group:
+            return sorted(suffixes)
+    return []
+
+
 def kind_of(suffix: str) -> str:
     return DOC_SUFFIXES.get(suffix.lower(), "文件")
 

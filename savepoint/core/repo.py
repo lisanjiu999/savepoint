@@ -575,6 +575,7 @@ class Repo:
         *,
         folder: str | None = None,
         query: str | None = None,
+        suffixes: list[str] | None = None,
         newest_first: bool = True,
     ) -> list[Document]:
         sql = ["SELECT * FROM documents WHERE deleted_at IS NULL"]
@@ -582,6 +583,12 @@ class Repo:
         if folder:
             sql.append("AND folder = ?")
             params.append(folder)
+        if suffixes is not None:
+            if not suffixes:
+                return []
+            placeholders = ",".join("?" for _ in suffixes)
+            sql.append(f"AND LOWER(ext) IN ({placeholders})")
+            params.extend(item.lower() for item in suffixes)
         if query:
             like = f"%{query}%"
             sql.append("AND (orig_name LIKE ? OR text_content LIKE ? OR note LIKE ?)")
@@ -590,6 +597,20 @@ class Repo:
         sql.append(f"ORDER BY created_at {order}, rowid {order}")
         rows = self.conn.execute(" ".join(sql), params).fetchall()
         return [self._row_to_doc(row) for row in rows]
+
+    def document_types(self) -> list[tuple[str, int]]:
+        """按文件类型统计，顺序固定（Word / PDF / Excel / …）。"""
+        from .documents import TYPE_ORDER, type_group_of
+
+        rows = self.conn.execute(
+            "SELECT ext, COUNT(*) AS n FROM documents WHERE deleted_at IS NULL"
+            " GROUP BY LOWER(ext)"
+        ).fetchall()
+        counts: dict[str, int] = {}
+        for row in rows:
+            group = type_group_of(row["ext"])
+            counts[group] = counts.get(group, 0) + int(row["n"])
+        return [(name, counts[name]) for name in TYPE_ORDER if name in counts]
 
     def find_document_by_hash(self, sha256: str) -> Document | None:
         row = self.conn.execute(
