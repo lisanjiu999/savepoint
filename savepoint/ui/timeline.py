@@ -130,7 +130,9 @@ class DropZone(QFrame):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(14, 10, 14, 10)
         layout.setSpacing(8)
-        layout.addWidget(QLabel("拖图片到这里，或点一下再按 Ctrl+V 粘贴"))
+        hint = QLabel("拖文件到这里：图片进时间线，文档会读出内容再问你要不要保存")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
         layout.addStretch(1)
 
         capture_btn = QPushButton("截图")

@@ -48,7 +48,7 @@ def main() -> int:
 
     print("[1] 数据库与迁移")
     conn = open_database(config.DB_PATH)
-    check("user_version", current_version(conn) == 3)
+    check("user_version", current_version(conn) == 4)
     fk = conn.execute("PRAGMA foreign_keys").fetchone()[0]
     check("foreign_keys 开启", fk == 1)
 
@@ -153,6 +153,58 @@ def main() -> int:
     repo.add_screenshot(project.id, rel_path=rel, thumb_path=thumb_rel, sha256=digest, caption="首页截图")
     check("截图入库", len(repo.list_screenshots(project.id)) == 1)
     check("按哈希去重", repo.find_screenshot_by_hash(project.id, digest) is not None)
+
+    print("[4.5] 文档导入")
+    from savepoint.core.documents import DocStore, extract_text, is_document
+    from savepoint.testdata_docs import build_docx, build_pdf, build_pptx, build_xlsx
+
+    docs_source = TEST_DIR / "docs"
+    docs_source.mkdir(parents=True, exist_ok=True)
+    build_docx(docs_source / "设计.docx")
+    build_pptx(docs_source / "汇报.pptx")
+    build_xlsx(docs_source / "名单.xlsx")
+    build_pdf(docs_source / "手册.pdf")
+    (docs_source / "说明.md").write_text("# 标题\n正文内容", encoding="utf-8")
+
+    check("识别文档后缀", is_document(docs_source / "设计.docx"))
+    check("图片不算文档", not is_document(docs_source / "sample.png"))
+
+    cases = {
+        "设计.docx": "数据库表结构",
+        "汇报.pptx": "幻灯片标题",
+        "名单.xlsx": "张三",
+        "手册.pdf": "Hello SavePoint",
+        "说明.md": "正文内容",
+    }
+    for name, expected in cases.items():
+        text, warn = extract_text(docs_source / name)
+        check(f"提取 {name}", expected in text, f"warn={warn}")
+
+    doc_store = DocStore(TEST_DIR / "documents")
+    src = docs_source / "设计.docx"
+    doc_rel, doc_size, doc_hash = doc_store.save(project.id, src)
+    check("文档落盘", doc_store.abs_path(doc_rel).is_file())
+    check("文档大小正确", doc_size == src.stat().st_size)
+
+    text, _warn = extract_text(src)
+    saved_doc = repo.add_document(
+        project.id, rel_path=doc_rel, orig_name="设计.docx", ext=".docx",
+        size=doc_size, sha256=doc_hash, text_content=text,
+    )
+    check("文档入库", len(repo.list_documents(project.id)) == 1)
+    check("文档内容已存", "接口设计" in repo.get_document(saved_doc.id).text_content)
+    check("文档按哈希去重", repo.find_document_by_hash(project.id, doc_hash) is not None)
+    check("搜索命中文档正文", any(
+        r["kind"] == "document" for r in repo.search_all("接口设计")
+    ))
+
+    repo.delete_document(saved_doc.id)
+    check("删除文档后列表为空", repo.list_documents(project.id) == [])
+    check("文档进回收站", any(
+        item["kind"] == "document" for item in repo.trash_items()
+    ))
+    repo.restore_item("document", saved_doc.id)
+    check("文档可恢复", len(repo.list_documents(project.id)) == 1)
 
     print("[5] 备份恢复")
     snap = backup_mod.make_snapshot(min_interval_hours=0, keep=3)

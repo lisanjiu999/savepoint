@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 
 APP_NAME = "SavePoint"
-APP_VERSION = "1.6.1"
+APP_VERSION = "1.7.0"
 # 任务栏分组要用稳定 ID，否则 Windows 会把程序归到 python 那一组
 APP_ID = "SavePoint.App.1"
 
@@ -183,17 +183,19 @@ DATA_DIR = resolve_data_dir()
 DB_PATH = DATA_DIR / "projects.db"
 SHOT_DIR = DATA_DIR / "screenshots"
 THUMB_DIR = DATA_DIR / "thumbnails"
+DOC_DIR = DATA_DIR / "documents"
 BACKUP_DIR = DATA_DIR / "backups"
 LOG_PATH = DATA_DIR / "savepoint.log"
 
 
 def reload_paths() -> None:
     """改了数据目录之后重新计算路径（只在启动早期调用）。"""
-    global DATA_DIR, DB_PATH, SHOT_DIR, THUMB_DIR, BACKUP_DIR, LOG_PATH
+    global DATA_DIR, DB_PATH, SHOT_DIR, THUMB_DIR, DOC_DIR, BACKUP_DIR, LOG_PATH
     DATA_DIR = resolve_data_dir()
     DB_PATH = DATA_DIR / "projects.db"
     SHOT_DIR = DATA_DIR / "screenshots"
     THUMB_DIR = DATA_DIR / "thumbnails"
+    DOC_DIR = DATA_DIR / "documents"
     BACKUP_DIR = DATA_DIR / "backups"
     LOG_PATH = DATA_DIR / "savepoint.log"
 
@@ -215,5 +217,5 @@ IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp", ".tif", ".ti
 
 
 def ensure_dirs() -> None:
-    for folder in (DATA_DIR, SHOT_DIR, THUMB_DIR, BACKUP_DIR):
+    for folder in (DATA_DIR, SHOT_DIR, THUMB_DIR, DOC_DIR, BACKUP_DIR):
         folder.mkdir(parents=True, exist_ok=True)

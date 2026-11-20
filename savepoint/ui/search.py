@@ -26,6 +26,7 @@ KIND_LABELS = {
     "entry": "记录",
     "note": "笔记",
     "screenshot": "截图",
+    "document": "文档",
 }
 
 

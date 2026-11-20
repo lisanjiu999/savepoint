@@ -61,6 +61,20 @@ class Note:
     updated_at: str
 
 
+@dataclass
+class Document:
+    id: str
+    project_id: str
+    rel_path: str
+    orig_name: str
+    ext: str
+    size: int
+    sha256: str
+    text_content: str
+    note: str
+    created_at: str
+
+
 class Repo:
     def __init__(self, conn: sqlite3.Connection) -> None:
         self.conn = conn
@@ -501,6 +515,102 @@ class Repo:
     def move_note(self, note_id: str, folder: str) -> None:
         self.update_note(note_id, folder=folder.strip() or "未分类")
 
+    # ---------------- 文档 ----------------
+
+    @staticmethod
+    def _row_to_doc(row: sqlite3.Row) -> Document:
+        return Document(
+            id=row["id"],
+            project_id=row["project_id"],
+            rel_path=row["rel_path"],
+            orig_name=row["orig_name"],
+            ext=row["ext"],
+            size=int(row["size"] or 0),
+            sha256=row["sha256"],
+            text_content=row["text_content"],
+            note=row["note"],
+            created_at=row["created_at"],
+        )
+
+    def add_document(
+        self,
+        project_id: str,
+        *,
+        rel_path: str,
+        orig_name: str,
+        ext: str,
+        size: int,
+        sha256: str,
+        text_content: str = "",
+        note: str = "",
+    ) -> Document:
+        doc_id = new_id()
+        stamp = now_iso()
+        self.conn.execute(
+            "INSERT INTO documents (id, project_id, rel_path, orig_name, ext, size,"
+            " sha256, text_content, note, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (doc_id, project_id, rel_path, orig_name, ext, int(size), sha256,
+             text_content, note, stamp),
+        )
+        self.conn.execute(
+            "UPDATE projects SET updated_at = ? WHERE id = ?", (stamp, project_id)
+        )
+        self.conn.commit()
+        return self.get_document(doc_id)
+
+    def get_document(self, doc_id: str) -> Document | None:
+        row = self.conn.execute(
+            "SELECT * FROM documents WHERE id = ? AND deleted_at IS NULL", (doc_id,)
+        ).fetchone()
+        return None if row is None else self._row_to_doc(row)
+
+    def list_documents(self, project_id: str, *, newest_first: bool = True) -> list[Document]:
+        order = "DESC" if newest_first else "ASC"
+        rows = self.conn.execute(
+            "SELECT * FROM documents WHERE project_id = ? AND deleted_at IS NULL"
+            f" ORDER BY created_at {order}, rowid {order}",
+            (project_id,),
+        ).fetchall()
+        return [self._row_to_doc(row) for row in rows]
+
+    def find_document_by_hash(self, project_id: str, sha256: str) -> Document | None:
+        row = self.conn.execute(
+            "SELECT * FROM documents WHERE project_id = ? AND sha256 = ?"
+            " AND deleted_at IS NULL",
+            (project_id, sha256),
+        ).fetchone()
+        return None if row is None else self._row_to_doc(row)
+
+    def set_document_note(self, doc_id: str, note: str) -> None:
+        self.conn.execute(
+            "UPDATE documents SET note = ? WHERE id = ?", (note.strip(), doc_id)
+        )
+        self.conn.commit()
+
+    def delete_document(self, doc_id: str) -> Document | None:
+        """软删除，进回收站。"""
+        doc = self.get_document(doc_id)
+        if doc is None:
+            return None
+        self.conn.execute(
+            "UPDATE documents SET deleted_at = ? WHERE id = ?", (now_iso(), doc_id)
+        )
+        self.conn.commit()
+        return doc
+
+    def document_paths(self, project_id: str) -> list[str]:
+        rows = self.conn.execute(
+            "SELECT rel_path FROM documents WHERE project_id = ?", (project_id,)
+        ).fetchall()
+        return [row["rel_path"] for row in rows]
+
+    def count_documents(self) -> int:
+        return int(
+            self.conn.execute(
+                "SELECT COUNT(*) FROM documents WHERE deleted_at IS NULL"
+            ).fetchone()[0]
+        )
+
     # ---------------- 回收站 ----------------
 
     def trash_items(self) -> list[dict]:
@@ -544,11 +654,29 @@ class Repo:
                 "deleted_at": row["deleted_at"],
             })
 
+        rows = self.conn.execute(
+            "SELECT d.id, d.orig_name, d.deleted_at, p.name AS project"
+            " FROM documents d LEFT JOIN projects p ON p.id = d.project_id"
+            " WHERE d.deleted_at IS NOT NULL ORDER BY d.deleted_at DESC"
+        ).fetchall()
+        for row in rows:
+            items.append({
+                "kind": "document", "id": row["id"],
+                "title": row["orig_name"] or "（文档）",
+                "sub": row["project"] or "（项目已移入回收站）",
+                "deleted_at": row["deleted_at"],
+            })
+
         items.sort(key=lambda item: item["deleted_at"], reverse=True)
         return items
 
     def restore_item(self, kind: str, item_id: str) -> None:
-        table = {"entry": "entries", "screenshot": "screenshots", "note": "notes"}.get(kind)
+        table = {
+            "entry": "entries",
+            "screenshot": "screenshots",
+            "note": "notes",
+            "document": "documents",
+        }.get(kind)
         if not table:
             return
         self.conn.execute(f"UPDATE {table} SET deleted_at = NULL WHERE id = ?", (item_id,))
@@ -563,6 +691,11 @@ class Repo:
             if shot is None:
                 return []
             return [shot.rel_path, shot.thumb_path]
+        if kind == "document":
+            doc = self.get_document(item_id)
+            self.conn.execute("DELETE FROM documents WHERE id = ?", (item_id,))
+            self.conn.commit()
+            return [doc.rel_path] if doc else []
         table = {"entry": "entries", "note": "notes"}.get(kind)
         if not table:
             return []
@@ -570,20 +703,30 @@ class Repo:
         self.conn.commit()
         return []
 
-    def purge_expired_trash(self, days: int = 30) -> list[str]:
-        """清掉超过保留期的回收站内容，返回要删的截图文件。"""
+    def purge_expired_trash(self, days: int = 30) -> list[tuple[str, str]]:
+        """清掉超过保留期的回收站内容。
+
+        返回 [(所属目录类型, 相对路径)]，截图和文档要删到不同目录里。
+        """
         cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%S")
-        paths: list[str] = []
+        paths: list[tuple[str, str]] = []
         rows = self.conn.execute(
             "SELECT rel_path, thumb_path FROM screenshots"
             " WHERE deleted_at IS NOT NULL AND deleted_at < ?",
             (cutoff,),
         ).fetchall()
         for row in rows:
-            paths.append(row["rel_path"])
+            paths.append(("screenshot", row["rel_path"]))
             if row["thumb_path"]:
-                paths.append(row["thumb_path"])
-        for table in ("entries", "screenshots", "notes"):
+                paths.append(("thumb", row["thumb_path"]))
+        rows = self.conn.execute(
+            "SELECT rel_path FROM documents"
+            " WHERE deleted_at IS NOT NULL AND deleted_at < ?",
+            (cutoff,),
+        ).fetchall()
+        for row in rows:
+            paths.append(("document", row["rel_path"]))
+        for table in ("entries", "screenshots", "notes", "documents"):
             self.conn.execute(
                 f"DELETE FROM {table} WHERE deleted_at IS NOT NULL AND deleted_at < ?",
                 (cutoff,),
@@ -649,6 +792,20 @@ class Repo:
             results.append({
                 "kind": "screenshot", "id": row["id"], "project_id": row["project_id"],
                 "title": row["caption"] or "（截图）", "sub": row["project"] or "",
+            })
+
+        rows = self.conn.execute(
+            "SELECT d.id, d.orig_name, d.project_id, p.name AS project FROM documents d"
+            " LEFT JOIN projects p ON p.id = d.project_id"
+            " WHERE d.deleted_at IS NULL"
+            " AND (d.orig_name LIKE ? OR d.text_content LIKE ? OR d.note LIKE ?)"
+            " LIMIT ?",
+            (like, like, like, limit),
+        ).fetchall()
+        for row in rows:
+            results.append({
+                "kind": "document", "id": row["id"], "project_id": row["project_id"],
+                "title": row["orig_name"] or "（文档）", "sub": row["project"] or "",
             })
         return results
 

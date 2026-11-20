@@ -121,11 +121,33 @@ CREATE INDEX IF NOT EXISTS idx_shots_deleted    ON screenshots(deleted_at);
 CREATE INDEX IF NOT EXISTS idx_notes_deleted    ON notes(deleted_at);
 """
 
+# v4：文档。把 Word / PDF / Excel 之类拖进来存到项目里，顺带存提取出的纯文本。
+SCHEMA_V4 = """
+CREATE TABLE IF NOT EXISTS documents (
+    id           TEXT PRIMARY KEY,
+    project_id   TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    rel_path     TEXT NOT NULL,
+    orig_name    TEXT NOT NULL,
+    ext          TEXT NOT NULL DEFAULT '',
+    size         INTEGER NOT NULL DEFAULT 0,
+    sha256       TEXT NOT NULL DEFAULT '',
+    text_content TEXT NOT NULL DEFAULT '',
+    note         TEXT NOT NULL DEFAULT '',
+    created_at   TEXT NOT NULL,
+    deleted_at   TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_docs_project ON documents(project_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_docs_sha     ON documents(project_id, sha256);
+CREATE INDEX IF NOT EXISTS idx_docs_deleted ON documents(deleted_at);
+"""
+
 # (目标版本, 脚本)。新增变更时追加，不要修改已发布的历史脚本。
 MIGRATIONS: list[tuple[int, str]] = [
     (1, SCHEMA_V1),
     (2, SCHEMA_V2),
     (3, SCHEMA_V3),
+    (4, SCHEMA_V4),
 ]
 
 SCHEMA_VERSION = MIGRATIONS[-1][0]

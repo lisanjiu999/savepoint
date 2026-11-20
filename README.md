@@ -32,10 +32,14 @@ SavePoint 只做一件事：**让你在做事的时候顺手留个存档点**，
 **截图时间线** —— 拖图片进来、`Ctrl+V` 粘贴、或者点「截图」框选屏幕区域，自动生成
 缩略图并按时间排好。同一张图会自动去重。
 
+**文档收纳** —— 把 Word / PDF / Excel / PPT 或文本文件拖进来，程序会先读出正文给你看，
+再问「保存到项目里吗」。存下之后桌面上的原件可以删掉，以后在项目里直接看内容。
+支持 PDF、docx、pptx、xlsx、md/txt/csv/json 等常见格式；旧版 `.doc/.xls/.ppt` 只保存不解析。
+
 **回顾视图** —— 左侧「最近更新」「长期未动」两个视角。30 天没动的进行中项目会挂
 一个橙色标记。
 
-**全局搜索** `Ctrl+K` —— 一个框搜项目、记录、笔记、截图说明，回车直达。
+**全局搜索** `Ctrl+K` —— 一个框搜项目、记录、笔记、截图说明和文档正文，回车直达。
 
 **活动流** —— 把所有项目的记录合并成按日期分组的时间线，回答“我这周到底干了啥”。
 
@@ -74,9 +78,10 @@ run.bat
 
 ```
 savepoint-data\
-├── projects.db          # SQLite：项目、记录、截图索引、笔记
+├── projects.db          # SQLite：项目、记录、截图索引、笔记、文档
 ├── screenshots\         # 原图
 ├── thumbnails\          # 缩略图
+├── documents\           # 收纳进来的 Word / PDF / Excel 等原件
 ├── backups\             # 自动快照 zip
 └── savepoint.log        # 日志
 ```
@@ -147,8 +152,9 @@ savepoint/                # 应用包
 ├── assets/               # 图标
 ├── core/
 │   ├── db.py             # 连接 + 版本化迁移（user_version）
-│   ├── repo.py           # 项目 / 标签 / 记录 / 截图 / 笔记 / 回收站
+│   ├── repo.py           # 项目 / 标签 / 记录 / 截图 / 笔记 / 文档 / 回收站
 │   ├── storage.py        # 截图落盘、缩略图、去重、清理
+│   ├── documents.py      # 文档入库与文本提取（PDF / Office / 纯文本）
 │   ├── backup.py         # 滚动快照与恢复
 │   ├── autostart.py      # 开机自启（HKCU Run）
 │   ├── single_instance.py# 单实例 + 唤起已有窗口

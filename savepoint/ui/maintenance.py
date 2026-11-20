@@ -22,16 +22,17 @@ from .. import config
 from ..core import backup as backup_mod
 from ..core import paths
 
-KIND_LABELS = {"entry": "记录", "screenshot": "截图", "note": "笔记"}
+KIND_LABELS = {"entry": "记录", "screenshot": "截图", "note": "笔记", "document": "文档"}
 
 
 class TrashDialog(QDialog):
     changed = Signal()
 
-    def __init__(self, parent: QWidget | None, repo, store) -> None:
+    def __init__(self, parent: QWidget | None, repo, store, doc_store=None) -> None:
         super().__init__(parent)
         self.repo = repo
         self.store = store
+        self.doc_store = doc_store
 
         self.setWindowTitle("回收站")
         self.resize(720, 520)
@@ -108,7 +109,10 @@ class TrashDialog(QDialog):
             return
         files = self.repo.purge_item(item["kind"], item["id"])
         if files:
-            self.store.remove_files(files)
+            if item["kind"] == "document" and self.doc_store is not None:
+                self.doc_store.remove(files)
+            else:
+                self.store.remove_files(files)
         self.refresh()
         self.changed.emit()
 

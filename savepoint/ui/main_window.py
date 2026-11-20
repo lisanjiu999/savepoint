@@ -141,10 +141,11 @@ class ProjectCard(QWidget):
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, repo: Repo, store: ShotStore) -> None:
+    def __init__(self, repo: Repo, store: ShotStore, doc_store=None) -> None:
         super().__init__()
         self.repo = repo
         self.store = store
+        self.doc_store = doc_store
         self.notes_window: NotesWindow | None = None
         self.search_dialog: GlobalSearchDialog | None = None
         self.activity_window: ActivityWindow | None = None
@@ -451,7 +452,7 @@ class MainWindow(QMainWindow):
         self.stack = QStackedWidget()
         self.stack.addWidget(self._build_empty_state())
 
-        self.detail = ProjectDetail(self.repo, self.store)
+        self.detail = ProjectDetail(self.repo, self.store, self.doc_store)
         self.detail.changed.connect(self._on_detail_changed)
         self.detail.deleted.connect(self._on_project_deleted)
         self.stack.addWidget(self.detail)
@@ -742,7 +743,7 @@ class MainWindow(QMainWindow):
 
     def open_trash(self) -> None:
         if self.trash_dialog is None:
-            self.trash_dialog = TrashDialog(self, self.repo, self.store)
+            self.trash_dialog = TrashDialog(self, self.repo, self.store, self.doc_store)
             self.trash_dialog.changed.connect(self.refresh_all)
         self.trash_dialog.refresh()
         self.trash_dialog.show()
@@ -831,6 +832,8 @@ class MainWindow(QMainWindow):
         self.repo.delete_project(project.id)
         self.repo.prune_orphan_tags()
         self.store.remove_project(project.id)
+        if self.doc_store is not None:
+            self.doc_store.remove_project(project.id)
         if self._selected_id == project.id:
             self._selected_id = None
             self.detail.clear()

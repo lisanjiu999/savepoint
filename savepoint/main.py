@@ -20,6 +20,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 from . import config
 from .console import ensure_utf8_console
 from .core.db import open_database
+from .core.documents import DocStore
 from .core.repo import Repo
 from .core.single_instance import SingleInstance
 from .core.storage import ShotStore
@@ -93,11 +94,11 @@ _WINDOW: object | None = None
 _INSTANCE: SingleInstance | None = None
 
 
-def _create_window(repo, store):  # noqa: ANN001, ANN202
+def _create_window(repo, store, doc_store):  # noqa: ANN001, ANN202
     """原生控件界面。"""
     from .ui.main_window import MainWindow
 
-    return MainWindow(repo, store)
+    return MainWindow(repo, store, doc_store)
 
 
 def main() -> int:
@@ -146,16 +147,20 @@ def main() -> int:
     conn = open_database(config.DB_PATH)
     repo = Repo(conn)
     store = ShotStore()
+    doc_store = DocStore()
 
-    # 清掉回收站里超过 30 天的内容（连同截图文件）
+    # 清掉回收站里超过 30 天的内容（连同截图与文档文件）
     try:
         stale = repo.purge_expired_trash(30)
-        if stale:
-            store.remove_files(stale)
+        for kind, rel in stale:
+            if kind == "document":
+                doc_store.remove([rel])
+            else:
+                store.remove_files([rel])
     except Exception:  # noqa: BLE001 - 清理失败不该挡住启动
         logging.getLogger("savepoint").exception("清理回收站失败")
 
-    window = _create_window(repo, store)
+    window = _create_window(repo, store, doc_store)
     _WINDOW = window
     instance.activated.connect(window.show_window)
     if not icon.isNull():

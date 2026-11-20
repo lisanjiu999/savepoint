@@ -282,6 +282,39 @@ def main() -> int:
         after = len(repo.list_screenshots(ids[0]))
         report("截图直接入库", after == before + 1, f"{before} -> {after}")
 
+    print("[文档导入]")
+    from savepoint.core.documents import DocStore, extract_text
+    from savepoint.testdata_docs import build_docx, build_pdf
+
+    docs_src = DATA / "drop"
+    docs_src.mkdir(parents=True, exist_ok=True)
+    build_docx(docs_src / "接口设计.docx")
+    build_pdf(docs_src / "使用手册.pdf")
+
+    doc_store = DocStore(DATA / "documents")
+    for name in ("接口设计.docx", "使用手册.pdf"):
+        src = docs_src / name
+        rel, size, digest = doc_store.save(ids[0], src)
+        text, _warn = extract_text(src)
+        repo.add_document(
+            ids[0], rel_path=rel, orig_name=name, ext=src.suffix,
+            size=size, sha256=digest, text_content=text,
+        )
+    detail.bind_project(ids[0])
+    app.processEvents()
+    report("文档卡片渲染", detail.docs_layout.count() == 2, str(detail.docs_layout.count()))
+    report("元信息含文档数", "份文档" in detail.meta_label.text(), detail.meta_label.text())
+    report("文档存储目录存在", doc_store.doc_dir.is_dir())
+
+    from savepoint.ui.document_dialog import DocumentViewer
+
+    doc = repo.list_documents(ids[0])[0]
+    viewer = DocumentViewer(window, doc, doc_store.abs_path(doc.rel_path))
+    viewer.show()
+    app.processEvents()
+    report("文档查看器可打开", viewer.isVisible())
+    viewer.close()
+
     print("[状态切换]")
     detail.status_combo.setCurrentIndex(detail.status_combo.findData("paused"))
     app.processEvents()
